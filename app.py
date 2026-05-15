@@ -1,114 +1,158 @@
 import streamlit as st
 import pandas as pd
-import math
+import json
 
 st.set_page_config(page_title="🚗 観光音声ナビ", layout="centered")
-st.title("🚗 観光音声ナビ (リアルタイム同期版)")
+st.title("🚗 観光音声ナビ (ノーフラッシュ決定版)")
 
 # 1. スプレッドシートからデータを取得
 # ★ご自身のシートIDに書き換えてください
 SHEET_ID = "1AVh_BtwGJJwXbQaiSnNaAlXh7SGhBBBCTMo6W3uPHN4" 
 SHEET_URL = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv"
 
-@st.cache_data(ttl=10)
+@st.cache_data(ttl=60)
 def load_data():
     return pd.read_csv(SHEET_URL)
 
 try:
     df = load_data()
-    st.success("スプレッドシート同期中...")
+    # JavaScriptに渡しやすいようにデータを整える
+    spots_list = []
+    for _, row in df.iterrows():
+        spots_list.append({
+            "name": str(row['name']),
+            "lat": float(row['lat']),
+            "lng": float(row['lng']),
+            "direction": None if pd.isna(row['direction']) else float(row['direction']),
+            "message": str(row['message'])
+        })
+    # JSONという形式の文字列に変換
+    spots_json = json.dumps(spots_list, ensure_ascii=False)
 except Exception as e:
-    st.error(f"読み込み失敗: {e}")
+    st.error(f"スプレッドシート読み込み失敗: {e}")
     st.stop()
 
-# 2. URLのパラメータ（裏でJavaScriptから送られてくる座標）を受け取る
-query_params = st.query_params
+st.success("データの読み込みに成功しました。下のボタンを押してスタートしてください。")
 
-# JavaScriptから届いた位置情報をPythonの変数に代入
-current_lat = float(query_params.get("lat")) if query_params.get("lat") else None
-current_lng = float(query_params.get("lng")) if query_params.get("lng") else None
-current_heading = float(query_params.get("heading")) if query_params.get("heading") else None
+# 2. ★超滑らかに動くHTML/JavaScriptの塊を画面に埋め込む
+navi_html = f"""
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <style>
+        .container {{
+            font-family: sans-serif;
+            text-align: center;
+            padding: 20px;
+            background: #1e1e1e;
+            color: #ffffff;
+            border-radius: 15px;
+        }}
+        button {{
+            font-size: 20px;
+            padding: 20px 40px;
+            border-radius: 10px;
+            cursor: pointer;
+            border: none;
+            background-color: #007bff;
+            color: white;
+            font-weight: bold;
+        }}
+        #display {{
+            margin-top: 20px;
+            font-size: 18px;
+            line-height: 1.6;
+        }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <button id="startBtn">🧭 ナビゲーションを開始</button>
+        <div id="display">ボタンを押すとGPS監視が始まります</div>
+    </div>
 
-# 3. 方位判定ロジック
-def is_correct_heading(current, target):
-    if current is None or math.isnan(current):
-        return False # 停止中は鳴らさない（じゅんさんの黄金ルール）
-    
-    diff = abs(current - float(target))
-    if diff > 180:
-        diff = 360 - diff
-    return diff <= 60
-
-# 4. 距離計算（ヒュベニの公式）
-def calculate_distance(lat1, lng1, lat2, lng2):
-    R = 6371000
-    rad_lat1, rad_lng1, rad_lat2, rad_lng2 = map(math.radians, [lat1, lng1, lat2, lng2])
-    dlat = rad_lat2 - rad_lat1
-    dlng = rad_lng2 - rad_lng1
-    a = math.sin(dlat/2)**2 + math.cos(rad_lat1) * math.cos(rad_lat2) * math.sin(dlng/2)**2
-    return R * (2 * math.atan2(math.sqrt(a), math.sqrt(1-a)))
-
-# 5. 現在地の表示と判定
-if current_lat and current_lng:
-    st.write(f"🌐 リアルタイム現在地: {current_lat:.5f}, {current_lng:.5f}")
-    st.write(f"🧭 現在の向き: {f'{int(current_heading)}度' if current_heading and not math.isnan(current_heading) else '停止中/方位取得中'}")
-    
-    if "played_spots" not in st.session_state:
-        st.session_state.played_spots = set()
-
-    for index, row in df.iterrows():
-        dist = calculate_distance(current_lat, current_lng, row['lat'], row['lng'])
+    <script>
+        // Pythonから渡されたスプレッドシートのデータ
+        const spots = {spots_json};
+        const playedSpots = new Set();
         
-        # 250m以内 かつ 未再生
-        if dist < 250 and row['name'] not in st.session_state.played_spots:
-            if pd.isna(row['direction']) or is_correct_heading(current_heading, row['direction']):
+        const startBtn = document.getElementById('startBtn');
+        const display = document.getElementById('display');
+
+        startBtn.onclick = () => {{
+            startBtn.style.backgroundColor = "#28a745";
+            startBtn.innerText = "🚗 ガイド実行中...";
+            display.innerText = "GPS信号をスキャン中...";
+            
+            // 音声テスト
+            speak("ガイドシステムを起動しました。");
+            
+            // GPS監視をスタート（リロードなしで滑らかに動くモード）
+            if (navigator.geolocation) {{
+                navigator.geolocation.watchPosition(checkLocation, (err) => {{
+                    display.innerText = "GPSエラー: " + err.message;
+                }}, {{
+                    enableHighAccuracy: true,
+                    maximumAge: 0,
+                    timeout: 10000
+                }});
+            }} else {{
+                alert("このブラウザはGPSに対応していません");
+            }}
+        }};
+
+        function checkLocation(position) {{
+            const lat = position.coords.latitude;
+            const lng = position.coords.longitude;
+            const heading = position.coords.heading;
+
+            // 画面の文字を書き換えるだけ（リロードしないからフラッシュしない！）
+            let headingText = (heading !== null && !isNaN(heading)) ? Math.round(heading) + "度" : "停止中";
+            display.innerHTML = `経度: ${{lat.toFixed(5)}}<br>緯度: ${{lng.toFixed(5)}}<br>方位: ${{headingText}}`;
+
+            spots.forEach(spot => {{
+                const dist = calculateDistance(lat, lng, spot.lat, spot.lng);
                 
-                # 音声再生
-                tts_script = f"""
-                <script>
-                    var uttr = new SpeechSynthesisUtterance("{row['message']}");
-                    uttr.lang = "ja-JP";
-                    window.speechSynthesis.speak(uttr);
-                </script>
-                """
-                st.components.v1.html(tts_script, height=0)
-                st.session_state.played_spots.add(row['name'])
-                st.balloons()
-else:
-    st.warning("📡 GPS信号を待機中、または位置情報の取得がオフです。")
+                // 250m以内 かつ 未再生
+                if (dist < 250 && !playedSpots.has(spot.name)) {{
+                    // 方位指定がない、または「停止中でない」かつ「方位が一致」
+                    if (spot.direction === null || isCorrectHeading(heading, spot.direction)) {{
+                        speak(spot.message);
+                        playedSpots.add(spot.name);
+                    }}
+                }}
+            }});
+        }}
 
-# 6. ★【心臓部】ブラウザのGPSセンサーを直接叩き起こして、Streamlitに位置情報を送りつけるJavaScript
-gps_bridge_html = """
-<script>
-    // 位置情報が更新されるたびに発火する関数
-    function updateLocation(position) {
-        const lat = position.coords.latitude;
-        const lng = position.coords.longitude;
-        const heading = position.coords.heading !== null ? position.coords.heading : "";
-        
-        // StreamlitのURLに座標をセットして、Python側を強制的に最新情報でリロードさせる
-        const newUrl = window.parent.location.protocol + "//" + window.parent.location.host + window.parent.location.pathname + `?lat=${lat}&lng=${lng}&heading=${heading}`;
-        window.parent.history.replaceState(null, null, newUrl);
-        
-        // 親ウィンドウ（Streamlit）をリロードしてPython側に通知
-        window.parent.location.reload();
-    }
+        // 停止中判定付きの方位ロジック（じゅんさん仕様）
+        function isCorrectHeading(current, target) {{
+            if (current === null || isNaN(current)) return false; 
+            let diff = Math.abs(current - target);
+            if (diff > 180) diff = 360 - diff;
+            return diff <= 60;
+        }}
 
-    function handleError(error) {
-        console.error("GPSエラー:", error);
-    }
+        // 距離計算（ヒュベニの公式）
+        function calculateDistance(lat1, lng1, lat2, lng2) {{
+            const R = 6371000;
+            const f1 = lat1 * Math.PI / 180;
+            const f2 = lat2 * Math.PI / 180;
+            const df = (lat2 - lat1) * Math.PI / 180;
+            const dl = (lng2 - lng1) * Math.PI / 180;
+            const a = Math.sin(df/2) * Math.sin(df/2) + Math.cos(f1) * Math.cos(f2) * Math.sin(dl/2) * Math.sin(dl/2);
+            return R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)));
+        }}
 
-    // ブラウザのGPS常時監視スタート（高精度モード）
-    if (navigator.geolocation) {
-        navigator.geolocation.watchPosition(updateLocation, handleError, {
-            enableHighAccuracy: true,
-            maximumAge: 0,
-            timeout: 5000
-        });
-    } else {
-        alert("お使いのブラウザはGPSに対応していません。");
-    }
-</script>
+        function speak(text) {{
+            const uttr = new SpeechSynthesisUtterance(text);
+            uttr.lang = "ja-JP";
+            window.speechSynthesis.speak(uttr);
+        }}
+    </script>
+</body>
+</html>
 """
-# 裏でJavaScriptの監視員を常駐させる
-st.components.v1.html(gps_bridge_html, height=0)
+
+# HTMLをStreamlitの画面上に埋め込む（縦幅を広めに確保）
+st.components.v1.html(navi_html, height=250)
