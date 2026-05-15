@@ -8,7 +8,7 @@ st.title("🚗 観光音声ナビ (Streamlit版)")
 
 # 1. スプレッドシートからデータを取得（CSVとして一発読み込み）
 # 「YOUR_SHEET_ID」の部分をご自身のスプレッドシートIDに書き換えてください
-SHEET_ID = "YOUR_SHEET_ID"
+SHEET_ID = "https://docs.google.com/spreadsheets/d/1AVh_BtwGJJwXbQaiSnNaAlXh7SGhBBBCTMo6W3uPHN4/edit?gid=0#gid=0"
 SHEET_URL = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv"
 
 @st.cache_data(ttl=60) # 60秒間データをキャッシュ（毎回読み込まないようにして高速化）
