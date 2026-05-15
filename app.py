@@ -26,7 +26,7 @@ try:
             "direction": None if pd.isna(row['direction']) else float(row['direction']),
             "message": str(row['message'])
         })
-    # JSONという形式の文字列に変換
+    # JSON形式の文字列に変換
     spots_json = json.dumps(spots_list, ensure_ascii=False)
 except Exception as e:
     st.error(f"スプレッドシート読み込み失敗: {e}")
@@ -34,7 +34,7 @@ except Exception as e:
 
 st.success("データの読み込みに成功しました。下のボタンを押してスタートしてください。")
 
-# 2. ★超滑らかに動くHTML/JavaScriptの塊を画面に埋め込む
+# 2. HTML/JavaScriptの埋め込み（方位5秒キープ機能付き）
 navi_html = f"""
 <!DOCTYPE html>
 <html>
@@ -77,6 +77,10 @@ navi_html = f"""
         const spots = {spots_json};
         const playedSpots = new Set();
         
+        // ★方位キープ用のメモリ変数
+        let lastValidHeading = null;     // 最後に認識した有効な方位
+        let lastValidHeadingTime = 0;    // それを認識した時刻（タイムスタンプ）
+        
         const startBtn = document.getElementById('startBtn');
         const display = document.getElementById('display');
 
@@ -85,10 +89,9 @@ navi_html = f"""
             startBtn.innerText = "🚗 ガイド実行中...";
             display.innerText = "GPS信号をスキャン中...";
             
-            // 音声テスト
             speak("ガイドシステムを起動しました。");
             
-            // GPS監視をスタート（リロードなしで滑らかに動くモード）
+            // GPS常時監視スタート（高精度モード）
             if (navigator.geolocation) {{
                 navigator.geolocation.watchPosition(checkLocation, (err) => {{
                     display.innerText = "GPSエラー: " + err.message;
@@ -105,54 +108,12 @@ navi_html = f"""
         function checkLocation(position) {{
             const lat = position.coords.latitude;
             const lng = position.coords.longitude;
-            const heading = position.coords.heading;
+            let heading = position.coords.heading;
+            const now = Date.now();
 
-            // 画面の文字を書き換えるだけ（リロードしないからフラッシュしない！）
-            let headingText = (heading !== null && !isNaN(heading)) ? Math.round(heading) + "度" : "停止中";
-            display.innerHTML = `経度: ${{lat.toFixed(5)}}<br>緯度: ${{lng.toFixed(5)}}<br>方位: ${{headingText}}`;
-
-            spots.forEach(spot => {{
-                const dist = calculateDistance(lat, lng, spot.lat, spot.lng);
-                
-                // 250m以内 かつ 未再生
-                if (dist < 250 && !playedSpots.has(spot.name)) {{
-                    // 方位指定がない、または「停止中でない」かつ「方位が一致」
-                    if (spot.direction === null || isCorrectHeading(heading, spot.direction)) {{
-                        speak(spot.message);
-                        playedSpots.add(spot.name);
-                    }}
-                }}
-            }});
-        }}
-
-        // 停止中判定付きの方位ロジック（じゅんさん仕様）
-        function isCorrectHeading(current, target) {{
-            if (current === null || isNaN(current)) return false; 
-            let diff = Math.abs(current - target);
-            if (diff > 180) diff = 360 - diff;
-            return diff <= 60;
-        }}
-
-        // 距離計算（ヒュベニの公式）
-        function calculateDistance(lat1, lng1, lat2, lng2) {{
-            const R = 6371000;
-            const f1 = lat1 * Math.PI / 180;
-            const f2 = lat2 * Math.PI / 180;
-            const df = (lat2 - lat1) * Math.PI / 180;
-            const dl = (lng2 - lng1) * Math.PI / 180;
-            const a = Math.sin(df/2) * Math.sin(df/2) + Math.cos(f1) * Math.cos(f2) * Math.sin(dl/2) * Math.sin(dl/2);
-            return R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)));
-        }}
-
-        function speak(text) {{
-            const uttr = new SpeechSynthesisUtterance(text);
-            uttr.lang = "ja-JP";
-            window.speechSynthesis.speak(uttr);
-        }}
-    </script>
-</body>
-</html>
-"""
-
-# HTMLをStreamlitの画面上に埋め込む（縦幅を広めに確保）
-st.components.v1.html(navi_html, height=250)
+            // 【方位キープ判定】
+            // ブラウザが正常に方位を掴んでいたら（走行中）
+            if (heading !== null && !isNaN(heading)) {{
+                lastValidHeading = heading;
+                lastValidHeadingTime = now;
+            }}
